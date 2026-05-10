@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Blackwood Ridge: The Cabin</title>
+    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+    
+    <script>
+      window.doorIsOpen = true; // Set to true so pathfinding allows passing through the doorway
+      window.introActive = true;
+      window.isUnderTable = false;
+      window.mathActive = false;
+      window.isDead = false; 
+      window.cutsceneActive = false; 
+      window.trapdoorOpen = false;
+      window.inUnderground = false;
+      window.endingActive = false;
+      window.correctAnswerIndex = 0;
+      window.currentTable = null;
+      
+      // Enrage, Room Tracking & Speed
+      window.currentRoom = 'none';
+      window.roomEnterTime = 0;
+      window.chaseTime = 0;
+
+      // Math Game & Punishment Variables
+      window.wrongAnswers = 0;
+      window.mathTimer = 15;
+      window.mathInterval = null;
+      window.animationActive = false;
+      window.isPunished = false;
+      window.tableCooldown = false;
+
+      // Puzzle State
+      window.talkSequence = [];
+      window.targetSequence = []; 
+
+      const tables = [
+        { id: 'main', pos: {x: -2, z: 1} },
+        { id: 'back', pos: {x: 0, z: 12} },
+        { id: 'left', pos: {x: -22, z: 0} },
+        { id: 'right', pos: {x: 20, z: -2} }
+      ];
+
+      const friendsData = [
+        { id: 'Dylan', pos: {x: -6.5, z: 6.5}, text: "" },
+        { id: 'Kevin', pos: {x: -23.5, z: -3.5}, text: "" },
+        { id: 'Jayden', pos: {x: 23.5, z: 3.5}, text: "" }
+      ];
+
+      window.spawnPairs = [
+        { p: {x: -16, z: 3}, m: {x: -4, z: 3} }, 
+        { p: {x: 16, z: 3}, m: {x: 4, z: 3} },   
+        { p: {x: 0, z: -4}, m: {x: 0, z: 8} },   
+        { p: {x: -4, z: 3}, m: {x: -16, z: 3} }, 
+        { p: {x: 4, z: 3}, m: {x: 16, z: 3} },   
+        { p: {x: 0, z: 8}, m: {x: 0, z: -4} }    
+      ];
+
+      function startMathGame() {
+        window.mathActive = true;
+        window.wrongAnswers = 0;
+        document.getElementById('math-ui').style.display = 'flex';
+        generateMathQuestion();
+        resetMathTimer();
+      }
+
+      function resetMathTimer() {
+        clearInterval(window.mathInterval);
+        window.mathTimer = 15;
+        updateTimerUI();
+        
+        window.mathInterval = setInterval(() => {
+          if (!window.mathActive) {
+            clearInterval(window.mathInterval);
+            return;
+          }
+          window.mathTimer--;
+          updateTimerUI();
+          if (window.mathTimer <= 0) {
+            clearInterval(window.mathInterval);
+            window.triggerPunishment();
+          }
+        }, 1000);
+      }
+
+      function updateTimerUI() {
+        document.getElementById('math-timer').innerText = `Time: ${window.mathTimer}s | Mistakes: ${window.wrongAnswers}/2`;
+      }
+
+      function handleWrongAnswer() {
+        window.wrongAnswers++;
+        updateTimerUI();
+        if (window.wrongAnswers >= 2) {
+          window.triggerPunishment();
+        } else {
+          generateMathQuestion();
+          resetMathTimer();
+        }
+      }
+
+      function generateMathQuestion() {
+        let num1 = Math.floor(Math.random() * 9) + 1;
+        let num2 = Math.floor(Math.random() * 9) + 1;
+        let ans = num1 + num2;
+        let options = [ans];
+        
+        while(options.length < 4) {
+          let fakeAns = ans + Math.floor(Math.random() * 10) - 5;
+          if (fakeAns > 0 && !options.includes(fakeAns)) options.push(fakeAns);
+        }
+        
+        options.sort(() => Math.random() - 0.5);
+        window.correctAnswerIndex = options.indexOf(ans) + 1; 
+
+        document.getElementById('math-equation').innerText = `${num1} + ${num2} = ?`;
+        document.getElementById('math-opt1').innerText = `[1]  ${options[0]}`;
+        document.getElementById('math-opt2').innerText = `[2]  ${options[1]}`;
+        document.getElementById('math-opt3').innerText = `[3]  ${options[2]}`;
+        document.getElementById('math-opt4').innerText = `[4]  ${options[3]}`;
+      }
+
+      window.triggerPunishment = () => {
+        window.isUnderTable = false;
+        window.mathActive = false;
+        clearInterval(window.mathInterval);
+        document.getElementById('math-ui').style.display = 'none';
+
+        // Freeze logic
+        window.animationActive = true;
+        let pScreen = document.getElementById('punishment-screen');
+        pScreen.style.display = 'flex';
+        pScreen.innerHTML = '';
+
+        let word = "PUNISHMENT";
+        for (let i = 0; i < word.length; i++) {
+          setTimeout(() => {
+            let span = document.createElement('span');
+            span.className = 'smash-letter';
+            span.innerText = word[i];
+            pScreen.appendChild(span);
+          }, i * 150); 
+        }
+
+        setTimeout(() => {
+          pScreen.style.display = 'none';
+          window.animationActive = false;
+          window.isPunished = true; // Alerts monster
+          window.tableCooldown = true; // Prevents hiding
+          
+          setTimeout(() => { window.tableCooldown = false; }, 3000);
+
+          let playerEl = document.getElementById('player-cam');
+          if (window.currentTable) {
+            let escapeX = window.currentTable.pos.x;
+            let escapeZ = window.currentTable.pos.z + 2; 
+            playerEl.object3D.position.set(escapeX, 1.9, escapeZ);
+            
+            // Speed decrease by 50% (Default is 25)
+            playerEl.setAttribute('wasd-controls', 'acceleration', '12.5');
+            
+            let logicComp = playerEl.components['game-logic'];
+            if (logicComp && logicComp.lastPos) {
+               logicComp.lastPos.copy(playerEl.object3D.position);
+            }
+            window.currentTable = null;
+          }
+
+          playerEl.setAttribute('wasd-controls', 'enabled', 'true');
+        }, word.length * 150 + 800);
+      };
+
+      function showSubtitle(text, duration = 3000) {
+        let subtitleUI = document.getElementById('subtitle-ui');
+        subtitleUI.innerText = text;
+        subtitleUI.style.opacity = '1';
+        clearTimeout(window.subtitleTimeout);
+        window.subtitleTimeout = setTimeout(() => {
+          subtitleUI.style.opacity = '0';
+        }, duration);
+      }
+
+      window.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('restart-btn').addEventListener('click', () => {
+          if (window.restartGame) window.restartGame();
+        });
+        document.getElementById('win-restart-btn').addEventListener('click', () => {
+          if (window.restartGame) window.restartGame();
+        });
+      });
+
+      AFRAME.registerComponent('game-logic', {
+        init: function () {
+          this.doorHinge = document.getElementById('door-hinge');
+          this.interactUI = document.getElementById('interact-ui');
+          this.mathUI = document.getElementById('math-ui');
+          this.vignette = document.getElementById('danger-vignette');
+          this.deathScreen = document.getElementById('death-screen');
+          this.winScreen = document.getElementById('win-screen');
+          this.lastPos = null;
+          this.deathPos = null; 
+          this.isLookingAtDoor = false;
+          this.isLookingAtTable = false;
+          this.isLookingAtFriend = false;
+          this.isLookingAtTrapdoor = false;
+          this.isLookingAtFakeJayden = false;
+          this.nearTable = null;
+          this.nearFriend = null;
+          
+          this.monsterState = 'idle'; 
+          this.roamTarget = new THREE.Vector3();
+          this.roamTimer = 0;
+
+          window.randomizeSpawns = () => {
+            let pair = window.spawnPairs[Math.floor(Math.random() * window.spawnPairs.length)];
+            
+            // Clean up states
+            window.isDead = false;
+            window.isUnderTable = false;
+            window.mathActive = false;
+            window.cutsceneActive = false;
+            window.trapdoorOpen = false;
+            window.inUnderground = false;
+            window.endingActive = false;
+            window.animationActive = false;
+            window.isPunished = false;
+            window.tableCooldown = false;
+            window.talkSequence = [];
+            window.chaseTime = 0;
+            clearInterval(window.mathInterval);
+            
+            this.mathUI.style.display = 'none';
+            this.deathScreen.style.display = 'none';
+            this.winScreen.style.display = 'none';
+            document.getElementById('punishment-screen').style.display = 'none';
+            document.getElementById('trapdoor-hole').setAttribute('visible', 'false');
+            
+            let fakeJayden = document.getElementById('fake-jayden');
+            if (fakeJayden) {
+              fakeJayden.setAttribute('rotation', '0 0 0');
+              fakeJayden.setAttribute('position', '0 -10 11');
+            }
+
+            let colors = [
+              { name: 'green', hex: '#27ae60' },
+              { name: 'purple', hex: '#8e44ad' },
+              { name: 'blue', hex: '#2980b9' }
+            ].sort(() => Math.random() - 0.5);
+
+            let friendsList = ['Dylan', 'Kevin', 'Jayden'];
+            let colorMap = {};
+            let textMap = {
+              'green': "Check the living room walls. Something is written there.",
+              'purple': "Did you hear that sliding noise? We need to figure out the password.",
+              'blue': "This place gives me the creeps... I just want to leave."
+            };
+
+            friendsList.forEach((friendId, i) => {
+              let colorName = colors[i].name;
+              let friendEntity = document.getElementById(`friend-${friendId.toLowerCase()}-box`);
+              if (friendEntity) {
+                friendEntity.setAttribute('color', colors[i].hex);
+                colorMap[colorName] = friendId;
+              }
+              let fData = friendsData.find(f => f.id === friendId);
+              if (fData) {
+                fData.text = `${friendId}: ${textMap[colorName]}`;
+              }
+            });
+
+            window.targetSequence = [colorMap['green'], colorMap['purple'], colorMap['blue']];
+
+            // Reset Player
+            this.el.setAttribute('wasd-controls', 'enabled', 'true');
+            this.el.setAttribute('wasd-controls', 'acceleration', '25'); // Reset speed
+            this.el.setAttribute('look-controls', 'enabled', 'true');
+            this.el.object3D.position.set(pair.p.x, 1.9, pair.p.z);
+            
+            if (this.lastPos) this.lastPos.copy(this.el.object3D.position);
+            else this.lastPos = new THREE.Vector3().copy(this.el.object3D.position);
+            
+            window.roomEnterTime = 0; 
+            window.currentRoom = 'none';
+
+            let monster = document.getElementById('monster');
+            if (monster) {
+              monster.object3D.position.set(pair.m.x, 0, pair.m.z);
+              this.monsterState = 'idle';
+              if (this.vignette) {
+                this.vignette.style.opacity = '0';
+                this.vignette.style.background = 'radial-gradient(circle, transparent 40%, rgba(150, 0, 0, 0.4) 100%)';
+              }
+            }
+
+            let bed = document.getElementById('the-bed');
+            if (bed) {
+                bed.removeAttribute('animation');
+                bed.setAttribute('position', '0 0.5 13');
+            }
+          };
+
+          window.restartGame = () => window.randomizeSpawns();
+          window.randomizeSpawns();
+
+          window.getOutFromTable = () => {
+            window.isUnderTable = false;
+            window.mathActive = false;
+            clearInterval(window.mathInterval);
+            this.mathUI.style.display = 'none';
+            this.el.setAttribute('wasd-controls', 'enabled', 'true');
+            
+            if (window.currentTable) {
+              let escapeX = window.currentTable.pos.x;
+              let escapeZ = window.currentTable.pos.z + 2; 
+              this.el.object3D.position.set(escapeX, 1.9, escapeZ);
+              if (this.lastPos) this.lastPos.copy(this.el.object3D.position);
+              window.currentTable = null;
+            }
+          };
+
+          let doorTarget = document.getElementById('door-target');
+          if (doorTarget) {
+            doorTarget.addEventListener('mouseenter', () => this.isLookingAtDoor = true);
+            doorTarget.addEventListener('mouseleave', () => this.isLookingAtDoor = false);
+          }
+
+          let trapdoorHole = document.getElementById('trapdoor-hole');
+          if (trapdoorHole) {
+            trapdoorHole.addEventListener('mouseenter', () => this.isLookingAtTrapdoor = true);
+            trapdoorHole.addEventListener('mouseleave', () => this.isLookingAtTrapdoor = false);
+          }
+
+          let fakeJaydenEl = document.getElementById('fake-jayden-target');
+          if (fakeJaydenEl) {
+            fakeJaydenEl.addEventListener('mouseenter', () => this.isLookingAtFakeJayden = true);
+            fakeJaydenEl.addEventListener('mouseleave', () => this.isLookingAtFakeJayden = false);
+          }
+
+          window.addEventListener('keydown', (e) => {
+            if (window.introActive || window.isDead || window.cutsceneActive || window.endingActive || window.animationActive) return;
+
+            if (window.mathActive && ['1', '2', '3', '4'].includes(e.key)) {
+              if (parseInt(e.key) === window.correctAnswerIndex) {
+                generateMathQuestion(); 
+                resetMathTimer();
+              } else handleWrongAnswer(); 
+              return;
+            }
+
+            if (e.code === 'KeyE' || e.key === 'e') {
+              if (window.isUnderTable) {
+                window.getOutFromTable();
+              } else if (window.inUnderground && this.isLookingAtFakeJayden) {
+                this.triggerEndingSequence();
+              } else if (this.isLookingAtTrapdoor && window.trapdoorOpen) {
+                window.inUnderground = true;
+                this.el.object3D.position.set(0, -8.1, 14); 
+                this.lastPos.copy(this.el.object3D.position);
+              } else if (this.nearFriend && this.isLookingAtFriend && !window.trapdoorOpen) {
+                showSubtitle(this.nearFriend.text, 4000);
+                
+                let expectedFriend = window.targetSequence[window.talkSequence.length];
+                
+                if (this.nearFriend.id === expectedFriend) {
+                  window.talkSequence.push(this.nearFriend.id);
+                  if (window.talkSequence.length === 3) {
+                    this.triggerTrapdoorCutscene();
+                  }
+                } else if (this.nearFriend.id !== window.talkSequence[window.talkSequence.length - 1]) {
+                  window.talkSequence = [];
+                  if (this.nearFriend.id === window.targetSequence[0]) {
+                     window.talkSequence.push(this.nearFriend.id); 
+                  }
+                }
+
+              } else if (this.nearTable && this.isLookingAtTable && !window.tableCooldown) {
+                window.isUnderTable = true;
+                window.isPunished = false; // Hide from monster
+                window.currentTable = this.nearTable;
+                this.el.setAttribute('wasd-controls', 'enabled', 'false'); 
+                this.el.object3D.position.set(this.nearTable.pos.x, 0.6, this.nearTable.pos.z);
+                this.lastPos.copy(this.el.object3D.position);
+                startMathGame();
+              } else if (this.isNearDoor && this.isLookingAtDoor) {
+                window.doorIsOpen = !window.doorIsOpen;
+                let rot = window.doorIsOpen ? 90 : 0;
+                if (this.doorHinge) {
+                  this.doorHinge.setAttribute('animation', `property: rotation; to: 0 ${rot} 0; dur: 500; easing: easeInOutQuad`);
+                }
+              }
+            }
+          });
+        },
+
+        triggerEndingSequence: function() {
+          window.endingActive = true;
+          this.el.setAttribute('wasd-controls', 'enabled', 'false');
+          this.el.setAttribute('look-controls', 'enabled', 'false');
+
+          const endingLines = [
+            "Jayden: You made it down here... I'm impressed.",
+            "Jayden: I was the one who summoned it.",
+            "Jayden: I was so tired of my boring, ordinary life.",
+            "Jayden: I betrayed them all to it... for power.",
+            "Jayden: But it lied... it's done with me too..."
+          ];
+
+          let lineIndex = 0;
+          let playNextLine = () => {
+            if (lineIndex < endingLines.length) {
+              showSubtitle(endingLines[lineIndex], 3500);
+              lineIndex++;
+              setTimeout(playNextLine, 4000);
+            } else {
+              let fj = document.getElementById('fake-jayden');
+              fj.setAttribute('animation', 'property: rotation; to: -90 0 0; dur: 1000; easing: easeInQuad');
+              fj.setAttribute('animation__pos', 'property: position; to: 0 -10.5 11; dur: 1000; easing: easeInQuad');
+              
+              setTimeout(() => {
+                document.exitPointerLock = document.exitPointerLock || document.mozExitPointerLock;
+                if (document.exitPointerLock) document.exitPointerLock();
+                if (this.winScreen) this.winScreen.style.display = 'flex';
+              }, 2000);
+            }
+          };
+
+          playNextLine();
+        },
+
+        triggerTrapdoorCutscene: function() {
+          window.cutsceneActive = true;
+          this.el.setAttribute('wasd-controls', 'enabled', 'false');
+          this.el.setAttribute('look-controls', 'enabled', 'false');
+          
+          this.el.object3D.position.set(0, 1.5, 9);
+          this.el.components['look-controls'].pitchObject.rotation.x = -0.2;
+          this.el.components['look-controls'].yawObject.rotation.y = Math.PI;
+
+          setTimeout(() => {
+            showSubtitle("You hear a grinding noise...", 2500);
+            document.getElementById('the-bed').setAttribute('animation', 'property: position; to: 2.5 0.5 13; dur: 3000; easing: easeInOutCubic');
+            
+            setTimeout(() => {
+              showSubtitle("A hidden trapdoor was revealed!", 4000);
+              window.trapdoorOpen = true;
+              document.getElementById('trapdoor-hole').setAttribute('visible', 'true');
+              
+              setTimeout(() => {
+                window.cutsceneActive = false;
+                this.el.setAttribute('wasd-controls', 'enabled', 'true');
+                this.el.setAttribute('look-controls', 'enabled', 'true');
+              }, 2000);
+              
+            }, 3000);
+          }, 1000);
+        },
+
+        tick: function (time, timeDelta) {
+          if (!this.el || !this.el.object3D || !this.el.sceneEl.camera) return; 
+          
+          let pos = this.el.object3D.position;
+          let monster = document.getElementById('monster');
+
+          if (window.isDead) {
+            if (!this.deathPos) return;
+            let jitter = 0.15;
+            pos.set(
+              this.deathPos.x + (Math.random() - 0.5) * jitter,
+              this.deathPos.y + (Math.random() - 0.5) * jitter,
+              this.deathPos.z + (Math.random() - 0.5) * jitter
+            );
+            if (monster) {
+              let forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.el.object3D.quaternion);
+              monster.object3D.position.copy(pos).add(forward.multiplyScalar(0.8)); 
+              monster.object3D.position.y -= 0.5; 
+              monster.object3D.lookAt(pos);
+            }
+            return; 
+          }
+
+          if (window.cutsceneActive || window.endingActive || window.inUnderground || window.animationActive) {
+            this.lastPos.copy(pos); 
+            return; 
+          }
+
+          if (!this.lastPos) {
+            this.lastPos = new THREE.Vector3().copy(pos);
+            return;
+          }
+
+          let getRoom = (x, z) => {
+            if (x > -7.2 && x < 7.2 && z > -7.2 && z < 7.2) return 'main';
+            if (x > -3.2 && x < 3.2 && z > 7.8 && z < 14.2) return 'back';
+            if (x > -1.2 && x < 1.2 && z >= 7.2 && z <= 7.8) return 'doorway';
+            if (x > -15 && x <= -7.2 && z > -1.2 && z < 1.2) return 'leftHall';
+            if (x > -24.8 && x <= -15 && z > -4.8 && z < 4.8) return 'leftRoom';
+            if (x >= 7.2 && x < 15 && z > -1.2 && z < 1.2) return 'rightHall';
+            if (x >= 15 && x < 24.8 && z > -4.8 && z < 4.8) return 'rightRoom';
+            return 'none';
+          };
+
+          let playerRoom = getRoom(pos.x, pos.z);
+          
+          if (window.isUnderTable) {
+            window.roomEnterTime += timeDelta; 
+          }
+
+          if (window.roomEnterTime === 0 && playerRoom !== 'none') {
+            window.roomEnterTime = time;
+            window.currentRoom = playerRoom;
+          } else if (playerRoom !== window.currentRoom && playerRoom !== 'none') {
+            window.roomEnterTime = time;
+            window.currentRoom = playerRoom;
+          }
+
+          let timeInRoom = time - window.roomEnterTime;
+          // Apply instant enrage if punished
+          let isEnraged = (timeInRoom > 5000) || window.isPunished; 
+
+          let checkValid = (x, z, isMonster = false, ignoreObjects = false) => {
+            let room = getRoom(x, z);
+            if (room === 'none') return false; 
+            if (!window.doorIsOpen && room === 'doorway' && !isMonster) return false;
+
+            const obstacles = [];
+            if (!ignoreObjects) {
+              obstacles.push(
+                { minX: -0.5, maxX: 4.5, minZ: -7.2, maxZ: -4.7 },   
+                { minX: -7.2, maxX: -4.8, minZ: -6.7, maxZ: -4.3 },  
+                { minX: -2.0, maxX:  2.0, minZ: 11.2, maxZ: 14.2 },  
+                { minX: -3.5, maxX: -1.5, minZ:  7.5, maxZ:  9.5 }   
+              );
+            }
+
+            tables.forEach(t => {
+              let isOccupied = (window.isUnderTable && window.currentTable === t);
+              let shouldBlock = false;
+
+              if (isMonster) {
+                if (!ignoreObjects) shouldBlock = true; 
+                else if (isOccupied) shouldBlock = true; 
+              } else {
+                if (!isOccupied) shouldBlock = true; 
+              }
+
+              if (shouldBlock) {
+                obstacles.push({
+                  minX: t.pos.x - 2, maxX: t.pos.x + 2,
+                  minZ: t.pos.z - 1.2, maxZ: t.pos.z + 1.2
+                });
+              }
+            });
+
+            for (let o of obstacles) {
+              if (x > o.minX && x < o.maxX && z > o.minZ && z < o.maxZ) return false; 
+            }
+            return true; 
+          };
+          
+          let getNextTarget = (mPos, pPos, mRoom, pRoom) => {
+            if (mRoom === pRoom || (isEnraged && mRoom === 'none')) return pPos; 
+            
+            const waypoints = {
+              'leftRoom_to_leftHall': {x: -14.8, z: 0},
+              'leftHall_to_main': {x: -7, z: 0},
+              'rightRoom_to_rightHall': {x: 14.8, z: 0},
+              'rightHall_to_main': {x: 7, z: 0},
+              'back_to_doorway': {x: 0, z: 7.9},
+              'doorway_to_main': {x: 0, z: 7.1}
+            };
+
+            if (mRoom === 'leftRoom') return waypoints['leftRoom_to_leftHall'];
+            if (mRoom === 'leftHall') return pRoom === 'leftRoom' ? waypoints['leftRoom_to_leftHall'] : waypoints['leftHall_to_main'];
+            if (mRoom === 'rightRoom') return waypoints['rightRoom_to_rightHall'];
+            if (mRoom === 'rightHall') return pRoom === 'rightRoom' ? waypoints['rightRoom_to_rightHall'] : waypoints['rightHall_to_main'];
+            if (mRoom === 'back') return waypoints['back_to_doorway'];
+            if (mRoom === 'doorway') return pRoom === 'back' ? waypoints['back_to_doorway'] : waypoints['doorway_to_main'];
+            
+            if (mRoom === 'main') {
+              if (pRoom === 'leftRoom' || pRoom === 'leftHall') return waypoints['leftHall_to_main'];
+              if (pRoom === 'rightRoom' || pRoom === 'rightHall') return waypoints['rightHall_to_main'];
+              if (pRoom === 'back' || pRoom === 'doorway') return waypoints['doorway_to_main'];
+            }
+            return pPos; 
+          };
+
+          let getRandomPointInRoom = (room, pPos) => {
+            let minX, maxX, minZ, maxZ;
+            if (room === 'main') { minX=-6.5; maxX=6.5; minZ=-6.5; maxZ=6.5; }
+            else if (room === 'back') { minX=-2.5; maxX=2.5; minZ=8.5; maxZ=13.5; }
+            else if (room === 'leftRoom') { minX=-24; maxX=-16; minZ=-4; maxZ=4; }
+            else if (room === 'rightRoom') { minX=16; maxX=24; minZ=-4; maxZ=4; }
+            else if (room === 'leftHall') { minX=-14; maxX=-8; minZ=-0.5; maxZ=0.5; }
+            else if (room === 'rightHall') { minX=8; maxX=14; minZ=-0.5; maxZ=0.5; }
+            else return {x: pPos.x, z: pPos.z};
+
+            let bestPt = {x: pPos.x, z: pPos.z};
+            let bestDist = -1;
+            
+            for(let i=0; i<5; i++) {
+              let rx = minX + Math.random() * (maxX - minX);
+              let rz = minZ + Math.random() * (maxZ - minZ);
+              let dist = Math.hypot(rx - pPos.x, rz - pPos.z);
+              if (dist > bestDist) {
+                bestDist = dist;
+                bestPt = {x: rx, z: rz};
+              }
+            }
+            return bestPt;
+          };
+
+          let camDir = new THREE.Vector3();
+          this.el.sceneEl.camera.getWorldDirection(camDir);
+          camDir.y = 0; 
+          camDir.normalize();
+
+          // Interactables Setup
+          let distToDoor = Math.hypot(pos.x - 0, pos.z - 7.5);
+          this.isNearDoor = distToDoor < 3;
+
+          this.nearTable = null;
+          let closestTableDist = 3; 
+          for (let t of tables) {
+            let dist = Math.hypot(pos.x - t.pos.x, pos.z - t.pos.z);
+            if (dist < closestTableDist) {
+              closestTableDist = dist;
+              this.nearTable = t;
+            }
+          }
+          if (this.nearTable && !window.isUnderTable) {
+            let toTable = new THREE.Vector3(this.nearTable.pos.x - pos.x, 0, this.nearTable.pos.z - pos.z);
+            if (toTable.lengthSq() > 0.01) toTable.normalize();
+            this.isLookingAtTable = (camDir.x * toTable.x + camDir.z * toTable.z) > 0.6; 
+          } else this.isLookingAtTable = false;
+
+          this.nearFriend = null;
+          let closestFriendDist = 3;
+          for (let f of friendsData) {
+            let dist = Math.hypot(pos.x - f.pos.x, pos.z - f.pos.z);
+            if (dist < closestFriendDist) {
+              closestFriendDist = dist;
+              this.nearFriend = f;
+            }
+          }
+          if (this.nearFriend && !window.isUnderTable) {
+            let toFriend = new THREE.Vector3(this.nearFriend.pos.x - pos.x, 0, this.nearFriend.pos.z - pos.z);
+            if (toFriend.lengthSq() > 0.01) toFriend.normalize();
+            this.isLookingAtFriend = (camDir.x * toFriend.x + camDir.z * toFriend.z) > 0.7; 
+          } else this.isLookingAtFriend = false;
+          
+          // UI UPDATES
+          if (this.interactUI && !window.introActive && !window.mathActive && !window.isDead && !window.cutsceneActive && !window.endingActive && !window.animationActive) {
+            if (window.isUnderTable) {
+              this.interactUI.style.display = 'block';
+              this.interactUI.innerText = "Press [E] to get out from under the table";
+            } else if (window.inUnderground && this.isLookingAtFakeJayden) {
+              this.interactUI.style.display = 'block';
+              this.interactUI.innerText = "Press [E] to talk to Jayden";
+            } else if (this.isLookingAtTrapdoor && window.trapdoorOpen) {
+              this.interactUI.style.display = 'block';
+              this.interactUI.innerText = "Press [E] to enter trapdoor";
+            } else if (this.nearFriend && this.isLookingAtFriend && !window.inUnderground && !window.trapdoorOpen) {
+              this.interactUI.style.display = 'block';
+              this.interactUI.innerText = `Press [E] to talk to ${this.nearFriend.id}`;
+            } else if (this.nearTable && this.isLookingAtTable) {
+              this.interactUI.style.display = 'block';
+              if (window.tableCooldown) {
+                this.interactUI.innerText = "Too scared to hide right now!";
+              } else {
+                this.interactUI.innerText = "Press [E] to hide under table";
+              }
+            } else if (this.isNearDoor && this.isLookingAtDoor && !window.inUnderground) {
+              this.interactUI.style.display = 'block';
+              this.interactUI.innerText = window.doorIsOpen ? "Press [E] to close door" : "Press [E] to open door";
+            } else this.interactUI.style.display = 'none';
+          } else {
+            this.interactUI.style.display = 'none';
+          }
+
+          if (monster && !window.introActive && !window.cutsceneActive && !window.inUnderground && !window.animationActive) {
+            let mPos = monster.object3D.position;
+            let monsterRoom = getRoom(mPos.x, mPos.z);
+            
+            let canSeePlayer = (!window.isUnderTable && playerRoom === monsterRoom && playerRoom !== 'none') || isEnraged;
+
+            if (canSeePlayer) {
+              this.monsterState = 'chasing';
+              if (this.vignette && !window.isDead) {
+                this.vignette.style.opacity = '1';
+                this.vignette.style.background = isEnraged 
+                  ? 'radial-gradient(circle, transparent 20%, rgba(200, 0, 0, 0.7) 100%)' 
+                  : 'radial-gradient(circle, transparent 40%, rgba(150, 0, 0, 0.4) 100%)';
+              }
+            } else if (window.isUnderTable && playerRoom === monsterRoom && playerRoom !== 'none') {
+              this.monsterState = 'roaming';
+              window.chaseTime = 0; 
+              if (this.vignette && !window.isDead) this.vignette.style.opacity = '0';
+            } else {
+              this.monsterState = 'idle';
+              window.chaseTime = 0; 
+              if (this.vignette && !window.isDead) this.vignette.style.opacity = '0';
+            }
+
+            let dt = Math.min(timeDelta / 1000, 0.1); 
+
+            if (this.monsterState === 'chasing') {
+              window.chaseTime += timeDelta;
+              let chaseSeconds = window.chaseTime / 1000;
+              let dynamicSpeed = Math.min(2.5 + (chaseSeconds * 0.5), 6.5);
+              let speed = isEnraged ? 9.5 : dynamicSpeed;
+
+              let targetPos = getNextTarget(mPos, pos, monsterRoom, playerRoom);
+              let dx = targetPos.x - mPos.x;
+              let dz = targetPos.z - mPos.z;
+              let targetDist = Math.hypot(dx, dz);
+
+              let playerDx = pos.x - mPos.x;
+              let playerDz = pos.z - mPos.z;
+              let distToPlayer = Math.hypot(playerDx, playerDz);
+
+              if (distToPlayer <= 0.8 && !window.isDead) {
+                window.isDead = true;
+                this.deathPos = new THREE.Vector3().copy(pos);
+                
+                this.el.setAttribute('wasd-controls', 'enabled', 'false');
+                this.el.setAttribute('look-controls', 'enabled', 'false');
+                
+                if (this.vignette) {
+                  this.vignette.style.background = 'radial-gradient(circle, transparent 0%, rgba(255, 0, 0, 0.9) 100%)';
+                  this.vignette.style.opacity = '1';
+                }
+
+                setTimeout(() => {
+                  document.exitPointerLock = document.exitPointerLock || document.mozExitPointerLock;
+                  if (document.exitPointerLock) document.exitPointerLock();
+                  if (this.deathScreen) this.deathScreen.style.display = 'flex';
+                }, 2000);
+
+              } else if (targetDist > 0.1 && !window.isDead) {
+                let moveX = (dx / targetDist) * speed * dt;
+                let moveZ = (dz / targetDist) * speed * dt;
+                
+                if (checkValid(mPos.x + moveX, mPos.z + moveZ, true, isEnraged)) {
+                  mPos.x += moveX; mPos.z += moveZ;
+                } else if (checkValid(mPos.x + moveX, mPos.z, true, isEnraged)) {
+                  mPos.x += moveX;
+                } else if (checkValid(mPos.x, mPos.z + moveZ, true, isEnraged)) {
+                  mPos.z += moveZ;
+                }
+                
+                monster.object3D.lookAt(pos.x, mPos.y, pos.z);
+              }
+            } else if (this.monsterState === 'roaming') {
+              this.roamTimer -= timeDelta;
+              if (this.roamTimer <= 0) {
+                this.roamTarget = getRandomPointInRoom(playerRoom, pos);
+                this.roamTimer = 3000 + Math.random() * 2000; 
+              }
+
+              let speed = 2.5; 
+              let dx = this.roamTarget.x - mPos.x;
+              let dz = this.roamTarget.z - mPos.z;
+              let targetDist = Math.hypot(dx, dz);
+
+              if (targetDist > 0.1) {
+                let moveX = (dx / targetDist) * speed * dt;
+                let moveZ = (dz / targetDist) * speed * dt;
+
+                if (checkValid(mPos.x + moveX, mPos.z + moveZ, true, false)) {
+                  mPos.x += moveX; mPos.z += moveZ;
+                } else if (checkValid(mPos.x + moveX, mPos.z, true, false)) {
+                  mPos.x += moveX;
+                } else if (checkValid(mPos.x, mPos.z + moveZ, true, false)) {
+                  mPos.z += moveZ;
+                } else {
+                  this.roamTimer = 0; 
+                }
+
+                let lookTarget = new THREE.Vector3(mPos.x + dx, mPos.y, mPos.z + dz);
+                monster.object3D.lookAt(lookTarget);
+              }
+            }
+          }
+
+          if (!checkValid(pos.x, pos.z, false, false) && !window.inUnderground && !window.animationActive) {
+            if (checkValid(pos.x, this.lastPos.z, false, false)) {
+              pos.z = this.lastPos.z; 
+            } else if (checkValid(this.lastPos.x, pos.z, false, false)) {
+              pos.x = this.lastPos.x; 
+            } else {
+              pos.copy(this.lastPos); 
+            }
+          } else {
+            this.lastPos.copy(pos); 
+          }
+        }
+      });
+    </script>
+
+    <style>
+      #intro-overlay {
+        position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+        background-color: black; z-index: 99999;
+        display: flex; flex-direction: column; justify-content: center; align-items: center;
+        color: white; font-family: 'Courier New', Courier, monospace; font-size: 24px; text-align: center;
+        padding: 20px; pointer-events: auto; 
+      }
+      #dialogue-text { opacity: 0; transition: opacity 2s ease-in-out; flex-grow: 1; display: flex; align-items: center; }
+      #skip-text { font-size: 14px; opacity: 0.5; margin-bottom: 20px; }
+      
+      #interact-ui {
+        position: fixed; bottom: 20%; left: 50%; transform: translateX(-50%);
+        color: white; font-family: 'Courier New', Courier, monospace; font-size: 18px;
+        display: none; z-index: 999; pointer-events: none; text-shadow: 1px 1px 2px black;
+      }
+
+      #subtitle-ui {
+        position: fixed; bottom: 10%; left: 50%; transform: translateX(-50%);
+        color: #ffcc66; font-family: 'Courier New', Courier, monospace; font-size: 20px;
+        opacity: 0; transition: opacity 0.3s ease; z-index: 999; pointer-events: none; 
+        text-shadow: 2px 2px 4px black; text-align: center; background: rgba(0,0,0,0.5); padding: 10px 20px;
+      }
+
+      #danger-vignette {
+        position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+        background: radial-gradient(circle, transparent 40%, rgba(150, 0, 0, 0.4) 100%);
+        pointer-events: none; z-index: 998; opacity: 0; transition: opacity 0.4s ease-in-out, background 0.4s ease-in-out;
+      }
+
+      .menu-screen {
+        position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+        z-index: 100000;
+        display: none; flex-direction: column; justify-content: center; align-items: center;
+        font-family: 'Courier New', Courier, monospace; pointer-events: auto;
+      }
+      #death-screen { background-color: rgba(0,0,0,0.85); color: darkred; }
+      #death-screen h1 { font-size: 80px; margin-bottom: 30px; text-shadow: 2px 2px 15px red; }
+      
+      #win-screen { background-color: rgba(0,0,0,0.95); color: #27ae60; }
+      #win-screen h1 { font-size: 80px; margin-bottom: 30px; text-shadow: 2px 2px 15px #27ae60; }
+
+      .restart-btn {
+        padding: 15px 40px; font-size: 24px; background: #0a0a0a; color: white;
+        border: 2px solid #555; cursor: pointer; font-family: 'Courier New', Courier, monospace;
+        transition: background 0.2s, color 0.2s;
+      }
+      #death-screen .restart-btn { border-color: darkred; }
+      #death-screen .restart-btn:hover { background: darkred; color: black; }
+      #win-screen .restart-btn { border-color: #27ae60; }
+      #win-screen .restart-btn:hover { background: #27ae60; color: black; }
+
+      #math-ui {
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        width: 450px; height: 280px; background-color: #0a0a0a; border: 3px solid #444;
+        color: white; font-family: 'Courier New', Courier, monospace;
+        display: none; flex-direction: column; justify-content: center; align-items: center;
+        z-index: 1000; box-shadow: 0 0 20px rgba(0,0,0,0.8);
+      }
+      #math-timer { font-size: 16px; color: #ff5555; margin-bottom: 15px; }
+      #math-equation { font-size: 32px; margin-bottom: 20px; }
+      .math-options { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; font-size: 20px; }
+
+      /* PUNISHMENT SCREEN STYLING */
+      #punishment-screen {
+        position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+        background-color: black; z-index: 100001;
+        display: none; justify-content: center; align-items: center;
+        font-family: 'Impact', sans-serif; font-size: 90px;
+        color: darkred; flex-direction: row; gap: 5px; pointer-events: none;
+      }
+      .smash-letter {
+        display: inline-block; opacity: 0;
+        transform: scale(5) translateZ(100px);
+        text-shadow:
+          1px 1px 0 #550000,
+          2px 2px 0 #440000,
+          3px 3px 0 #330000,
+          4px 4px 0 #220000,
+          5px 5px 0 #110000,
+          6px 6px 15px rgba(255,0,0,0.4);
+        animation: smashAnim 0.15s forwards ease-in;
+      }
+      @keyframes smashAnim {
+        0% { opacity: 0; transform: scale(5); }
+        80% { opacity: 1; transform: scale(0.8); }
+        100% { opacity: 1; transform: scale(1); }
+      }
+    </style>
+  </head>
+  <body>
+
+    <div id="intro-overlay">
+      <div id="dialogue-text"></div>
+      <div id="skip-text">Press [SPACE] to skip</div>
+    </div>
+    
+    <div id="danger-vignette"></div>
+    <div id="interact-ui">Press [E] to interact</div>
+    <div id="subtitle-ui"></div>
+
+    <div id="punishment-screen"></div>
+
+    <div id="death-screen" class="menu-screen">
+      <h1>YOU DIED</h1>
+      <button id="restart-btn" class="restart-btn">Play Again</button>
+    </div>
+
+    <div id="win-screen" class="menu-screen">
+      <h1>YOU SURVIVED</h1>
+      <button id="win-restart-btn" class="restart-btn">Play Again</button>
+    </div>
+
+    <div id="math-ui">
+      <div id="math-timer">Time: 15s | Mistakes: 0/2</div>
+      <div id="math-equation">1 + 1 = ?</div>
+      <div class="math-options">
+        <div id="math-opt1">[1] 2</div>
+        <div id="math-opt2">[2] 3</div>
+        <div id="math-opt3">[3] 4</div>
+        <div id="math-opt4">[4] 5</div>
+      </div>
+    </div>
+
+    <a-scene background="color: #020100">
+
+      <a-camera id="player-cam" look-controls="pointerLockEnabled: true" wasd-controls="acceleration: 25" game-logic>
+        <a-cursor color="#ffcc66" raycaster="objects: .interactable"></a-cursor>
+      </a-camera>
+
+      <a-plane position="0 0.01 0" rotation="-90 0 0" width="15" height="15" color="#2b1d12"></a-plane>
+      <a-plane position="0 4.99 0" rotation="90 0 0" width="15" height="15" color="#1c130c"></a-plane>
+      
+      <a-box position="0 2.5 -7.5" width="15" height="5" depth="0.1" color="#3a2718"></a-box>
+      <a-box position="-7.5 2.5 -4.5" width="0.1" height="5" depth="6" color="#3a2718"></a-box> 
+      <a-box position="-7.5 2.5 4.5" width="0.1" height="5" depth="6" color="#3a2718"></a-box> 
+      <a-box position="7.5 2.5 -4.5" width="0.1" height="5" depth="6" color="#3a2718"></a-box> 
+      <a-box position="7.5 2.5 4.5" width="0.1" height="5" depth="6" color="#3a2718"></a-box> 
+      <a-box position="-4.25 2.5 7.5" width="6.5" height="5" depth="0.1" color="#3a2718"></a-box> 
+      <a-box position="4.25 2.5 7.5" width="6.5" height="5" depth="0.1" color="#3a2718"></a-box> 
+      <a-box position="0 4 7.5" width="2" height="2" depth="0.1" color="#3a2718"></a-box> 
+
+      <a-text value="GREEN\nPURPLE\nBLUE" position="-7.4 2.5 0" rotation="0 90 0" color="#7a0000" scale="2 2 2" align="center"></a-text>
+
+      <a-box position="-3.75 4.7 0" width="0.5" height="0.5" depth="15" color="#1a0a00"></a-box>
+      <a-box position="0 4.7 0" width="0.5" height="0.5" depth="15" color="#1a0a00"></a-box>
+      <a-box position="3.75 4.7 0" width="0.5" height="0.5" depth="15" color="#1a0a00"></a-box>
+
+      <a-plane position="0 0.01 11" rotation="-90 0 0" width="7" height="7" color="#2b1d12"></a-plane>
+      <a-plane position="0 4.99 11" rotation="90 0 0" width="7" height="7" color="#1c130c"></a-plane>
+      <a-box position="-3.5 2.5 11" width="0.1" height="5" depth="7" color="#3a2718"></a-box> 
+      <a-box position="3.5 2.5 11" width="0.1" height="5" depth="7" color="#3a2718"></a-box> 
+      <a-box position="0 2.5 14.5" width="7.1" height="5" depth="0.1" color="#3a2718"></a-box> 
+
+      <a-entity id="trapdoor" position="0 0.02 13">
+        <a-box width="1.5" height="0.05" depth="1.5" color="#1a0f0a"></a-box>
+        <a-box id="trapdoor-hole" class="interactable" width="1.5" height="0.1" depth="1.5" position="0 0.1 0" color="#000" visible="false" opacity="0.5"></a-box>
+      </a-entity>
+
+      <a-entity id="the-bed" position="0 0.5 13">
+        <a-box width="3" height="0.5" depth="2" color="#3d2314"></a-box>
+        <a-box width="2.8" height="0.2" depth="1.8" position="0 0.35 0" color="#e2e2e2"></a-box>
+        <a-box width="0.6" height="0.2" depth="1.6" position="-1.1 0.45 0" color="#a6a6a6"></a-box>
+      </a-entity>
+
+
+      <a-plane position="-11.25 0.01 0" rotation="-90 0 0" width="7.5" height="3" color="#22150d"></a-plane>
+      <a-plane position="-11.25 4.99 0" rotation="90 0 0" width="7.5" height="3" color="#1c130c"></a-plane>
+      <a-box position="-11.25 2.5 -1.5" width="7.5" height="5" depth="0.1" color="#3a2718"></a-box>
+      <a-box position="-11.25 2.5 1.5" width="7.5" height="5" depth="0.1" color="#3a2718"></a-box>
+      
+      <a-plane position="-20 0.01 0" rotation="-90 0 0" width="10" height="10" color="#2b1d12"></a-plane>
+      <a-plane position="-20 4.99 0" rotation="90 0 0" width="10" height="10" color="#1c130c"></a-plane>
+      <a-box position="-15 2.5 -3.25" width="0.1" height="5" depth="3.5" color="#3a2718"></a-box>
+      <a-box position="-15 2.5 3.25" width="0.1" height="5" depth="3.5" color="#3a2718"></a-box>
+      <a-box position="-25 2.5 0" width="0.1" height="5" depth="10" color="#3a2718"></a-box>
+      <a-box position="-20 2.5 -5" width="10" height="5" depth="0.1" color="#3a2718"></a-box>
+      <a-box position="-20 2.5 5" width="10" height="5" depth="0.1" color="#3a2718"></a-box>
+
+      <a-plane position="11.25 0.01 0" rotation="-90 0 0" width="7.5" height="3" color="#22150d"></a-plane>
+      <a-plane position="11.25 4.99 0" rotation="90 0 0" width="7.5" height="3" color="#1c130c"></a-plane>
+      <a-box position="11.25 2.5 -1.5" width="7.5" height="5" depth="0.1" color="#3a2718"></a-box>
+      <a-box position="11.25 2.5 1.5" width="7.5" height="5" depth="0.1" color="#3a2718"></a-box>
+      
+      <a-plane position="20 0.01 0" rotation="-90 0 0" width="10" height="10" color="#2b1d12"></a-plane>
+      <a-plane position="20 4.99 0" rotation="90 0 0" width="10" height="10" color="#1c130c"></a-plane>
+      <a-box position="15 2.5 -3.25" width="0.1" height="5" depth="3.5" color="#3a2718"></a-box>
+      <a-box position="15 2.5 3.25" width="0.1" height="5" depth="3.5" color="#3a2718"></a-box>
+      <a-box position="25 2.5 0" width="0.1" height="5" depth="10" color="#3a2718"></a-box>
+      <a-box position="20 2.5 -5" width="10" height="5" depth="0.1" color="#3a2718"></a-box>
+      <a-box position="20 2.5 5" width="10" height="5" depth="0.1" color="#3a2718"></a-box>
+
+
+      <a-entity id="underground-bunker" position="0 -10 13">
+        <a-plane position="0 0.01 0" rotation="-90 0 0" width="5" height="5" color="#111"></a-plane>
+        <a-plane position="0 3.99 0" rotation="90 0 0" width="5" height="5" color="#0a0a0a"></a-plane>
+        <a-box position="-2.5 2 0" width="0.1" height="4" depth="5" color="#1a1a1a"></a-box>
+        <a-box position="2.5 2 0" width="0.1" height="4" depth="5" color="#1a1a1a"></a-box>
+        <a-box position="0 2 -2.5" width="5" height="4" depth="0.1" color="#1a1a1a"></a-box>
+        <a-box position="0 2 2.5" width="5" height="4" depth="0.1" color="#1a1a1a"></a-box>
+        
+        <a-light type="point" intensity="0.3" position="0 3 0" color="#ff4444" decay="2" distance="6"></a-light>
+
+        <a-entity id="fake-jayden" position="0 0 -1">
+          <a-box id="fake-jayden-target" class="interactable" position="0 0.75 0" width="0.8" height="1.8" depth="0.6" opacity="0"></a-box>
+          <a-box position="0 0.75 0" width="0.6" height="1.5" depth="0.4" color="#000000"></a-box>
+          <a-sphere position="0 1.7 0" radius="0.25" color="#000000"></a-sphere>
+          <a-box position="-0.1 1.6 0.22" width="0.06" height="0.02" depth="0.05" color="#ffffff" rotation="0 0 25"></a-box>
+          <a-box position="0 1.58 0.24" width="0.1" height="0.02" depth="0.05" color="#ffffff"></a-box>
+          <a-box position="0.1 1.6 0.22" width="0.06" height="0.02" depth="0.05" color="#ffffff" rotation="0 0 -25"></a-box>
+          <a-text value="Jayden" position="0 2.2 0" align="center" color="#ff5555" scale="1.5 1.5 1.5"></a-text>
+        </a-entity>
+      </a-entity>
+
+
+      <a-sky color="#020306"></a-sky>
+
+      <a-light type="ambient" color="#665544"></a-light>
+      <a-light type="point" intensity="2.5" position="0 4 0" color="#f4d1a0" decay="1.5" distance="15"></a-light>
+      <a-light type="point" intensity="0.8" position="0 3 11" color="#f4d1a0" decay="2" distance="10"></a-light>
+      <a-light type="point" intensity="0.8" position="-20 3 0" color="#f4d1a0" decay="2" distance="12"></a-light>
+      <a-light type="point" intensity="0.8" position="20 3 0" color="#f4d1a0" decay="2" distance="12"></a-light>
+
+      <a-entity id="monster">
+        <a-box position="0 0.75 0" width="0.6" height="1.5" depth="0.4" color="#000000"></a-box>
+        <a-sphere position="0 1.7 0" radius="0.25" color="#000000"></a-sphere>
+        <a-box position="-0.1 1.6 0.22" width="0.06" height="0.02" depth="0.05" color="#ffffff" rotation="0 0 25"></a-box>
+        <a-box position="0 1.58 0.24" width="0.1" height="0.02" depth="0.05" color="#ffffff"></a-box>
+        <a-box position="0.1 1.6 0.22" width="0.06" height="0.02" depth="0.05" color="#ffffff" rotation="0 0 -25"></a-box>
+      </a-entity>
+
+      <a-entity id="friend-dylan" position="-6.5 0 6.5" rotation="0 45 0">
+        <a-box id="friend-dylan-box" position="0 0.75 0" width="0.6" height="1.5" depth="0.4" color="#2c3e50"></a-box>
+        <a-sphere position="0 1.7 0" radius="0.25" color="#f1c27d"></a-sphere>
+        <a-text value="Dylan" position="0 2.2 0" align="center" color="white" scale="1.5 1.5 1.5"></a-text>
+      </a-entity>
+
+      <a-entity id="friend-kevin" position="-23.5 0 -3.5" rotation="0 135 0">
+        <a-box id="friend-kevin-box" position="0 0.75 0" width="0.6" height="1.5" depth="0.4" color="#8e44ad"></a-box>
+        <a-sphere position="0 1.7 0" radius="0.25" color="#f1c27d"></a-sphere>
+        <a-text value="Kevin" position="0 2.2 0" align="center" color="white" scale="1.5 1.5 1.5"></a-text>
+      </a-entity>
+
+      <a-entity id="friend-jayden" position="23.5 0 3.5" rotation="0 -45 0">
+        <a-box id="friend-jayden-box" position="0 0.75 0" width="0.6" height="1.5" depth="0.4" color="#27ae60"></a-box>
+        <a-sphere position="0 1.7 0" radius="0.25" color="#e0ac69"></a-sphere>
+        <a-text value="Jayden" position="0 2.2 0" align="center" color="white" scale="1.5 1.5 1.5"></a-text>
+      </a-entity>
+
+      <a-entity id="table-main" position="-2 0 1">
+        <a-box position="0 1.5 0" width="3" height="0.1" depth="2" color="#2c1a0c"></a-box>
+        <a-cylinder position="-1.3 0.75 -0.8" radius="0.08" height="1.5" color="#1a0a00"></a-cylinder>
+        <a-cylinder position="1.3 0.75 -0.8" radius="0.08" height="1.5" color="#1a0a00"></a-cylinder>
+        <a-cylinder position="-1.3 0.75 0.8" radius="0.08" height="1.5" color="#1a0a00"></a-cylinder>
+        <a-cylinder position="1.3 0.75 0.8" radius="0.08" height="1.5" color="#1a0a00"></a-cylinder>
+      </a-entity>
+
+      <a-entity id="table-back" position="0 0 12">
+        <a-box position="0 1.5 0" width="3" height="0.1" depth="2" color="#2c1a0c"></a-box>
+        <a-cylinder position="-1.3 0.75 -0.8" radius="0.08" height="1.5" color="#1a0a00"></a-cylinder>
+        <a-cylinder position="1.3 0.75 -0.8" radius="0.08" height="1.5" color="#1a0a00"></a-cylinder>
+        <a-cylinder position="-1.3 0.75 0.8" radius="0.08" height="1.5" color="#1a0a00"></a-cylinder>
+        <a-cylinder position="1.3 0.75 0.8" radius="0.08" height="1.5" color="#1a0a00"></a-cylinder>
+      </a-entity>
+
+      <a-entity id="table-left" position="-22 0 0" rotation="0 90 0">
+        <a-box position="0 1.5 0" width="3" height="0.1" depth="2" color="#2c1a0c"></a-box>
+        <a-cylinder position="-1.3 0.75 -0.8" radius="0.08" height="1.5" color="#1a0a00"></a-cylinder>
+        <a-cylinder position="1.3 0.75 -0.8" radius="0.08" height="1.5" color="#1a0a00"></a-cylinder>
+        <a-cylinder position="-1.3 0.75 0.8" radius="0.08" height="1.5" color="#1a0a00"></a-cylinder>
+        <a-cylinder position="1.3 0.75 0.8" radius="0.08" height="1.5" color="#1a0a00"></a-cylinder>
+      </a-entity>
+
+      <a-entity id="table-right" position="20 0 -2" rotation="0 90 0">
+        <a-box position="0 1.5 0" width="3" height="0.1" depth="2" color="#2c1a0c"></a-box>
+        <a-cylinder position="-1.3 0.75 -0.8" radius="0.08" height="1.5" color="#1a0a00"></a-cylinder>
+        <a-cylinder position="1.3 0.75 -0.8" radius="0.08" height="1.5" color="#1a0a00"></a-cylinder>
+        <a-cylinder position="-1.3 0.75 0.8" radius="0.08" height="1.5" color="#1a0a00"></a-cylinder>
+        <a-cylinder position="1.3 0.75 0.8" radius="0.08" height="1.5" color="#1a0a00"></a-cylinder>
+      </a-entity>
+
+    </a-scene>
+
+    <script>
+      const lines = [
+        "It started three weeks ago.",
+        "First, it was the Miller boy. Then the twins from down the creek.",
+        "The police combed the woods. They found nothing.",
+        "But we knew better. Kids don't just 'wander off' around here.",
+        "Dylan found an old map. Kevin swiped heavy flashlights.",
+        "Jayden didn't want to come. He kept talking about the local legends...",
+        "And me? I'm Vickram. I just wanted to know the truth.",
+        "We went to investigate why the little kids were disappearing.",
+        "...We should have just stayed home.",
+        "We also learned that he watches, and strikes if we don't leave."
+      ];
+
+      let currentLine = 0;
+      let fadeTimeout, nextLineTimeout;
+
+      function playIntro() {
+        const textElement = document.getElementById("dialogue-text");
+        if (!window.introActive || !textElement) return;
+
+        if (currentLine < lines.length) {
+          textElement.innerText = lines[currentLine];
+          void textElement.offsetWidth; 
+          textElement.style.opacity = "1";
+          
+          fadeTimeout = setTimeout(() => {
+            if (!window.introActive) return;
+            textElement.style.opacity = "0";
+            currentLine++;
+            nextLineTimeout = setTimeout(playIntro, 2000); 
+          }, 3500); 
+        } else {
+          endIntro(3000); 
+        }
+      }
+
+      function endIntro(fadeDuration) {
+        const overlay = document.getElementById("intro-overlay");
+        if (!window.introActive || !overlay) return;
+        
+        window.introActive = false;
+        overlay.style.transition = `opacity ${fadeDuration / 1000}s ease-in-out`;
+        overlay.style.opacity = "0";
+        
+        setTimeout(() => {
+          overlay.style.display = "none";
+        }, fadeDuration);
+      }
+
+      window.addEventListener('DOMContentLoaded', () => {
+        window.addEventListener('keydown', (event) => {
+          if (event.code === 'Space' && window.introActive) {
+            clearTimeout(fadeTimeout);
+            clearTimeout(nextLineTimeout);
+            endIntro(1000); 
+          }
+        });
+
+        setTimeout(playIntro, 1500); 
+      });
+    </script>
+  </body>
+</html>
